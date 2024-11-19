@@ -7,7 +7,16 @@ import pandas as pd
 import datetime as dt
 from prophet import Prophet
 from prophet.plot import plot_plotly, plot_components_plotly
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import r2_score, mean_absolute_error, root_mean_squared_error
+from sklearn.preprocessing import MinMaxScaler
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Bidirectional, LSTM, Dense, Input
+import os
+
+st.set_page_config(page_title="Search",
+                   layout="wide",
+                   initial_sidebar_state="auto")
 
 st.title("Ticker Search and Analysis")
 
@@ -72,13 +81,13 @@ with history:
 
     st.header("Historic Pricing Movements")
 
-    def plot_historic_data(data, columns, ticker_name):
+    def plot_data(data, columns, ticker_name):
         fig = go.Figure()
         for column in columns:
-            fig.add_trace(go.Line(x = stock_data["Date"], 
-                                y = stock_data[column], 
+            fig.add_trace(go.Line(x = data["Date"], 
+                                y = data[column], 
                                 name = column,
-                                text = stock_data[column]))
+                                text = data[column]))
         fig.update_layout(
             xaxis=dict(
                     rangeselector=dict(
@@ -110,66 +119,279 @@ with history:
         )
         fig.layout.update(title_text = ticker_name)
         return fig
-    fig1 = plot_historic_data(stock_data, keys, all_symbols[all_symbols.index == ticker]["Name"].item())
+    fig1 = plot_data(stock_data, keys, all_symbols[all_symbols.index == ticker]["Name"].item())
 
     st.plotly_chart(fig1)
     st.dataframe(stock_data, hide_index = True, use_container_width = True)
     # -----------------------------------------------------------------------
 
 
+
+
 # TIME SERIES ANALYSIS  ----------------------------------------------------------------
 
-
+# PROPHET -------------------------------------------------------
 with prophet_analysis:
-    # TIME SERIES ANALYSIS 
+    # TIME SERIES ANALYSIS
     st.header("Time Series Forecasting Using FB Prophet")
-    # Selecting the historical closing prices
-    df_prophet = stock_data[["Date", "Close"]].copy()
-    # Renaming the columns to make the column names fit the formula
-    df_prophet.rename(columns = {"Date": "ds", "Close": "y"}, inplace=True)
+    
+    if st.button("Execute Prophet"):
+        # Selecting the historical closing prices
+        
+        def make_prophet_model(df):
+            prophet_df = df[["Date", "Close"]].copy()
+            # Renaming the columns to make the column names fit the formula
+            prophet_df.rename(columns = {"Date": "ds", "Close": "y"}, inplace=True)
 
-    # Defining the FB Prophet model
-    model = Prophet(growth = "linear")
-    # Fitting the data frame
-    model.fit(df_prophet)
-    # Creating a data frame for model fitting and prediction of closing values
-    future_df = model.make_future_dataframe(periods = 365)
-    # Forecasting
-    forecast_df = model.predict(future_df)
-    
-    # Error Scores
-    r2 = r2_score(y_true=df_prophet['y'], y_pred=forecast_df['yhat'].loc[:len(df_prophet)-1])
-    mae = mean_absolute_error(y_true=df_prophet['y'], y_pred=forecast_df['yhat'].loc[:len(df_prophet)-1])
-    mse = mean_squared_error(y_true=df_prophet['y'], y_pred=forecast_df['yhat'].loc[:len(df_prophet)-1])
-    
-    time_series_errors = {"Metric": ["R-Squared", "Mean Absolute Error", "Mean Squared Error"],
-                          "Value": [r2, mae, mse]}
-    
-    # Creating a plotly figure of the model forecasts
-    fig2 = plot_plotly(model, 
-                    forecast_df,
-                    trend = True, 
-                    xlabel = "Dates",
-                    ylabel = "Closing Price")
-    fig2.layout.update(title_text = f"Piece-Wise Linear Model Forecast Results for {ticker}")
-    # Creating a plotly figure of the components of the model
-    # fig3 = plot_components_plotly(model, forecast_df)
-    st.plotly_chart(fig2)
+            prophet_train_df = prophet_df.iloc[:int(prophet_df.shape[0] * 0.7), :]
+            prophet_test_df = prophet_df.iloc[int(prophet_df.shape[0] * 0.7):, :]
 
-    st.write("Accuracy and Error Scores")
-    st.dataframe(time_series_errors, hide_index = True, use_container_width = True)
+            # Defining the FB Prophet model
+            prophet_model = Prophet(growth = "linear")
+            # Fitting the data frame
+            prophet_model.fit(prophet_train_df)
+            
+            # Creating a data frame for model fitting and prediction of closing values
+            # We will use it to predict the test data, and also an additional 30 days into the future
+            
+            prophet_forecast = prophet_model.make_future_dataframe(periods = prophet_test_df.shape[0] + 30)
+            prophet_forecast = prophet_model.predict(prophet_forecast)
+
+            # We compare the test data predictions (ignoring the actual 30 day future forecast)
+            prophet_yhat = prophet_forecast["yhat"].iloc[prophet_train_df.shape[0]: prophet_df.shape[0]]
+            prophet_y_true = prophet_test_df["y"]
+            
+            # Error Scores
+            prophet_r2 = r2_score(y_true=prophet_y_true, y_pred=prophet_yhat)
+            prophet_mae = mean_absolute_error(y_true=prophet_y_true, y_pred=prophet_yhat)
+            prophet_mse = (root_mean_squared_error(y_true=prophet_y_true, y_pred=prophet_yhat))**2
+        
+            return prophet_model, prophet_forecast, prophet_r2, prophet_mae, prophet_mse
+        
+        prophet_model, prophet_forecast, prophet_r2, prophet_mae, prophet_mse = make_prophet_model(stock_data)
+        
+        time_series_errors = {"Metric": ["R-Squared", "Mean Absolute Error", "Mean Squared Error"],
+                            "Value": [prophet_r2, prophet_mae, prophet_mse]}
+        
+        # Creating a plotly figure of the model forecasts
+        fig2 = plot_plotly(prophet_model, 
+                        prophet_forecast,
+                        trend = True, 
+                        xlabel = "Dates",
+                        ylabel = "Closing Price")
+        fig2.layout.update(title_text = f"{ticker} Forecast Using Prophet")
+        # Creating a plotly figure of the components of the model
+        # fig3 = plot_components_plotly(model, forecast_df)
+        
+        
+        st.plotly_chart(fig2)
+
+        st.markdown("**Model Accuracy Scores**")
+        st.dataframe(time_series_errors, hide_index = True, use_container_width = True)
+        
+        # Only showing the forecast predictions
+        st.write(f"Forecast dataset for {ticker}")
+        st.dataframe(prophet_forecast,
+                    hide_index = True, 
+                    use_container_width= True)
+
+
+# TENSORFLOW -------------------------------------------------------------------
+
+# FUNCTIONS ----------------------------------------------------------------------------------------
+def make_dataset(df, num_lags, num_steps, num_features):
+
+    scaler = MinMaxScaler()
+    new_df = df.filter(["Close"])
+    new_df.rename(columns = {"Close":"x"}, inplace=True)
     
-    # Only showing the forecast predictions
-    st.write(f"Forecast dataset for {ticker}")
-    st.dataframe(forecast_df[forecast_df["ds"] > dt.datetime.today()],
-                hide_index = True, 
-                use_container_width= True)
+    # Using the preceding 40 days to predict the following 30 days
+    num_lags = num_lags
+    num_steps = num_steps
     
+    num_features = num_features # Univariate model (since we are only using the closing price)
+
+
+    # Defining the lag steps to use for input
+    for i in range(num_lags +1):
+        new_df.insert(loc = 1, column = f"t-{i}", value = new_df.iloc[:,0].shift(periods=i))
+
+    # Defining the time steps to predict as output
+    for j in range(1,num_steps):
+        new_df.insert(loc=num_lags+j+1, column = f"t+{j}", value = new_df.iloc[:,0].shift(periods = -j))
+
+    new_df.dropna(inplace=True)
+    # Train/Test Split of 70/30
+    X_train = new_df.iloc[:int(new_df.shape[0] * 0.7),  1: num_lags + 1].values
+    X_test  = new_df.iloc[ int(new_df.shape[0] * 0.7):, 1: num_lags + 1].values
+    y_train = new_df.iloc[:int(new_df.shape[0] * 0.7),  num_lags + 1:].values
+    y_test  = new_df.iloc[ int(new_df.shape[0] * 0.7):, num_lags + 1:].values
+
+    X_train = scaler.fit_transform(X_train)
+    X_test  = scaler.fit_transform(X_test)
+    y_train = scaler.fit_transform(y_train)
+    y_test  = scaler.fit_transform(y_test)
+
+    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], num_features))
+    X_test  = X_test.reshape(( X_test.shape[0],  X_test.shape[1],  num_features))
+
+    return scaler, X_train, X_test, y_train, y_test
+
+def build_model(df, num_lags, num_steps, num_features):
+    
+    scaler, X_train, X_test, y_train, y_test = make_dataset(df, num_lags, num_steps, num_features)
+    
+    # Defining the number of neurons of the LSTM models
+    n_neurons = X_train.shape[1] * X_train.shape[2]
+    
+    # Model will be based on sequential time series
+    model = Sequential()
+    
+    # Bidirectional Long Short-term Memory
+    model.add(Bidirectional(LSTM(units = n_neurons,
+                                return_sequences = True,
+                                activation = "relu",
+                                input_shape = (num_lags, num_features)
+                        )))
+    model.add(Bidirectional(LSTM(units = n_neurons, 
+                                return_sequences = False
+                                )))
+    # Compress output into a dense layer of size of the number of time steps we are predicting
+    model.add(Dense(num_steps))
+    
+    
+    model.compile(loss = "mse",
+                metrics=['MAE'],
+                optimizer = "adam"
+                )
+    
+    model.fit(X_train, 
+              y_train,
+              validation_data = (X_test, y_test),
+              epochs = 50,
+              verbose = 0
+              )
+        
+    return scaler, model, X_test, y_test
+
+def make_forecast(df, model, num_lags, num_steps, scaler):
+    
+    # Chossing the last days for prediction
+    input = np.array(df.filter(["Close"]).iloc[-lags:])
+    input = input.reshape(-1,1)
+    input = scaler.fit_transform(input)
+    input = input.reshape(1, input.shape[0], -1)
+    
+    # Making forecast using input and transforming it
+    forecast = model.predict(input)
+    forecast = scaler.inverse_transform(forecast)
+    forecast = forecast[0].tolist()
+    
+    # Making a copy of the dataframe to add Forecast column
+    copy_df = df[["Date","Close"]].copy()
+    copy_df["Forecast"] = np.nan
+
+    # We loop through each element of the forecast list
+    for i in range(len(forecast)):
+    # We skip weekends, since market closes.
+        if (dt.datetime.strptime(copy_df.iloc[-1]["Date"],'%Y-%m-%d').weekday() == 4):
+            new_row = {"Date": [str((dt.datetime.strptime(copy_df.iloc[-1]["Date"],'%Y-%m-%d') + dt.timedelta(days = 3)).strftime("%Y-%m-%d"))],
+                        "Close": [np.nan],
+                        "Forecast": [forecast[i]]}
+            new_row = pd.DataFrame.from_dict(new_row)
+            copy_df = pd.concat([copy_df, new_row], ignore_index = True)
+        # All dates involving weekdays are registered
+        else:
+            new_row = {"Date": [str((dt.datetime.strptime(copy_df.iloc[-1]["Date"], "%Y-%m-%d") + dt.timedelta(days = 1)).strftime("%Y-%m-%d"))],
+                        "Close": [np.nan],
+                        "Forecast": [forecast[i]]}
+            new_row = pd.DataFrame.from_dict(new_row)
+            copy_df = pd.concat([copy_df, new_row], ignore_index = True)
+    
+    return copy_df
+
+# Keras Tab Window
 with tf_analysis:
-    st.write("Analysis using Keras and Tensor Flow")    
+    st.header("Time Series Analysis using Keras and TensorFlow") 
+    
+    # Users press button to execute Keras model
+    if st.button("Execute Keras"):
+        lags = 30
+        steps = 30
+        features = 1
+        cwd = os.getcwd()
+        if os.path.isdir(f"{cwd}\\KerasModels") == False:
+            os.mkdir(f"{cwd}\\KerasModels")
+
+        # First, we check if a trained model already exists
+        # If it exists, the model file is loaded
+        if os.path.isfile(f"{cwd}\\KerasModels\\{ticker}_Model.keras") == True:
+            st.write("Loading model ...")
+            model = tf.keras.models.load_model(f"{cwd}\\KerasModels\\{ticker}_Model.keras")
+            scaler, X_train, X_test, y_train, y_test = make_dataset(stock_data, lags, steps, features)
+            predictions = model.predict(X_test)
+            del(X_train)
+            del(y_train)
+            st.write("Model successfully loaded")
+            
+        # If the model does not exist, the model is built, trained, and saved in storage
+        else:
+            st.write("Model does not exist. Building and training model ...")
+            scaler, model, X_test, y_test = build_model(stock_data, lags, steps, features)
+            predictions = model.predict(X_test)
+            model.save(f"{cwd}\\KerasModels\\{ticker}_Model.keras", overwrite=True, zipped=None)
+            st.write("Model successfully built and saved")
+        
+        # In either case, the model is then used to make the forecast
+        lstm_forecast_df = make_forecast(stock_data, model, lags, steps, scaler)
+        
+        # A figure is plotted showing the closing prices and the 30-day forecast
+        fig4 = plot_data(lstm_forecast_df, ["Close", "Forecast"], ticker + " Historical Prices w. 30-day Forecast")
+        st.plotly_chart(fig4)
+                
+        # We inverse-transform the y_test and test predictions
+        inverse_predictions = scaler.inverse_transform(predictions)
+        inverse_y_test = scaler.inverse_transform(y_test)
+        
+        # We transform the tensor of true and predictes values into lists
+        y_vals = inverse_y_test[0].tolist()
+        y_pred = inverse_predictions[0].tolist()
+        # We will have hundreds of cells, each one with a collection of values determined by the number of steps
+        # The last entry in each cell of size of num_steps will be the value of the following day. 
+        for i in range(inverse_y_test.shape[0]):
+            y_vals.append(inverse_y_test[i][-1])
+            y_pred.append(inverse_predictions[i][-1])
+        
+        fig5 = go.Figure()
+        fig5.add_scatter(y = y_vals, name = "Actual", hoverinfo = "y")
+        fig5.add_scatter(y = y_pred, name = "Prediction", hoverinfo = "y")
+        fig5.update_layout(
+            title = f"{ticker} Test Data Comparing Predictions w. Actual Values",
+            yaxis = dict(title = "Closing Price"),
+            xaxis = dict( title = "Date",
+                showticklabels= False))
+        
+        st.plotly_chart(fig5)
+        
+        # Accuracy scores
+        r2 = r2_score(y_true=y_test, y_pred=predictions)
+        mae = mean_absolute_error(y_true=y_test, y_pred=predictions)
+        mse = (root_mean_squared_error(y_true=y_test, y_pred=predictions))**2
+        
+        Keras_time_series_errors = {"Metric": ["R-Squared", "Mean Absolute Error", "Mean Squared Error"],
+                                    "Value": [r2, mae, mse]}
+        
+        st.markdown("**Model Accuracy Scores**")
+        st.dataframe(Keras_time_series_errors, 
+                     use_container_width=True, 
+                     hide_index = True)
+        
 
 
-# TABS ------------------------------------------------------------------
+        
+        
+
+# LOWER TABS ------------------------------------------------------------------
 description, summary, fundamental_data = st.tabs(["Description", 
                                                                 "Business Summary", 
                                                                 "Fundamental Data"])
@@ -193,7 +415,7 @@ with description:
 # ASSET SUMMARY TAB
 with summary:
     st.subheader("Business Summary")
-    st.dataframe(summary, hide_index = True, use_container_width= True)
+    st.dataframe(summary_library, hide_index = True, use_container_width= True)
     
         
 # FUNDAMENTAL DATA TAB -------------------------------
@@ -256,3 +478,5 @@ with fundamental_data:
             for column in income_copy.columns:
                 income_copy.rename(columns = {column: column.date()}, inplace=True)
             st.dataframe(income_copy, use_container_width=True)    
+            
+
