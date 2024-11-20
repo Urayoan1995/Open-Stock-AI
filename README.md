@@ -10,3 +10,5 @@ To run, make sure you have files "Home.py", the "pages" folder, and the "NASDAQ"
 streamlit run Home.py
 
 on terminal.
+
+The deployed application can also be found in the [Streamlit community website](https://urayoan1995-open-stock-ai-home-wpnnyl.streamlit.app/).
