@@ -1,8 +1,8 @@
-numpy==1.26.4
-pandas==2.2.3
+numpy
+pandas
 yahooquery==2.3.7
-tensorflow==2.17.0
+tensorflow
 plotly==5.24.1
-scikit-learn==1.5.2
+scikit-learn
 prophet==1.1.6
-keras==1.1.6
+keras
