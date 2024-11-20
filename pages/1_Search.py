@@ -1,7 +1,6 @@
 import streamlit as st
 import numpy as np
 from yahooquery import Ticker
-import plotly.express as px
 from plotly import graph_objects as go
 import pandas as pd
 import datetime as dt
