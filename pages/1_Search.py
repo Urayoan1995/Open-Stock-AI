@@ -154,21 +154,20 @@ with prophet_analysis:
             # Creating a data frame for model fitting and prediction of closing values
             # We will use it to predict the test data, and also an additional 30 days into the future
             
-            prophet_forecast = prophet_model.make_future_dataframe(periods = prophet_test_df.shape[0] + 30)
+            prophet_test_pred = prophet_model.predict(prophet_test_df)
+            
+            prophet_forecast = prophet_model.make_future_dataframe(periods = 225)
             prophet_forecast = prophet_model.predict(prophet_forecast)
 
-            # We compare the test data predictions (ignoring the actual 30 day future forecast)
-            prophet_yhat = prophet_forecast["yhat"].iloc[prophet_train_df.shape[0]: prophet_df.shape[0]]
-            prophet_y_true = prophet_test_df["y"]
-            
+            # We compare the test data predictions
             # Error Scores
-            prophet_r2 = r2_score(y_true=prophet_y_true, y_pred=prophet_yhat)
-            prophet_mae = mean_absolute_error(y_true=prophet_y_true, y_pred=prophet_yhat)
-            prophet_mse = (root_mean_squared_error(y_true=prophet_y_true, y_pred=prophet_yhat))**2
+            prophet_r2 = r2_score(y_true=prophet_test_df["y"], y_pred=prophet_test_pred["yhat"])
+            prophet_mae = mean_absolute_error(y_true=prophet_test_df["y"], y_pred=prophet_test_pred["yhat"])
+            prophet_mse = (root_mean_squared_error(y_true=prophet_test_df["y"], y_pred=prophet_test_pred["yhat"]))**2
         
-            return prophet_model, prophet_forecast, prophet_r2, prophet_mae, prophet_mse
+            return prophet_model, prophet_forecast, prophet_test_df, prophet_test_pred, prophet_r2, prophet_mae, prophet_mse
         
-        prophet_model, prophet_forecast, prophet_r2, prophet_mae, prophet_mse = make_prophet_model(stock_data)
+        prophet_model, prophet_forecast, prophet_test_df, prophet_test_pred, prophet_r2, prophet_mae, prophet_mse = make_prophet_model(stock_data)
         
         time_series_errors = {"Metric": ["R-Squared", "Mean Absolute Error", "Mean Squared Error"],
                             "Value": [prophet_r2, prophet_mae, prophet_mse]}
@@ -180,11 +179,24 @@ with prophet_analysis:
                         xlabel = "Dates",
                         ylabel = "Closing Price")
         fig2.layout.update(title_text = f"{ticker} Forecast Using Prophet")
+        
+        # Plotting test data comparison
+        fig_test = go.Figure()
+        fig_test.add_scatter(y = prophet_test_df["y"], name = "Actual", hoverinfo = "y")
+        fig_test.add_scatter(y = prophet_test_pred["yhat"], name = "Prediction", hoverinfo = "y")
+        fig_test.update_layout(
+            title = f"{ticker} Test Data Comparing Prophet Predictions w. Actual Values",
+            yaxis = dict(title = "Closing Price"),
+            xaxis = dict(title = "Date",
+                showticklabels= False))
+                
         # Creating a plotly figure of the components of the model
         # fig3 = plot_components_plotly(model, forecast_df)
         
         
         st.plotly_chart(fig2)
+        
+        st.plotly_chart(fig_test)
 
         st.markdown("**Model Accuracy Scores**")
         st.dataframe(time_series_errors, hide_index = True, use_container_width = True)
@@ -259,9 +271,7 @@ def build_model(df, num_lags, num_steps, num_features):
     # Compress output into a dense layer of size of the number of time steps we are predicting
     model.add(Dense(num_steps))
     
-    
     model.compile(loss = "mse",
-                metrics=['MAE'],
                 optimizer = "adam"
                 )
     
