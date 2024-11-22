@@ -329,12 +329,12 @@ with tf_analysis:
         steps = 30
         features = 1
         cwd = os.getcwd()
-        if os.path.isdir(f"{cwd}\\KerasModels") == False:
-            os.mkdir(f"{cwd}\\KerasModels")
+        if os.path.isdir(f"{cwd}/KerasModels") == False:
+            os.mkdir(f"{cwd}/KerasModels")
 
         # First, we check if a trained model already exists
         # If it exists, the model file is loaded
-        if os.path.isfile(f"{cwd}\\KerasModels\\{ticker}_Model.keras") == True:
+        if os.path.isfile(f"{cwd}/KerasModels/{ticker}_Model.keras") == True:
             st.write("Loading model ...")
             model = tf.keras.models.load_model(f"{cwd}\\KerasModels\\{ticker}_Model.keras")
             scaler, X_train, X_test, y_train, y_test = make_dataset(stock_data, lags, steps, features)
@@ -348,7 +348,7 @@ with tf_analysis:
             st.write("Model does not exist. Building and training model ...")
             scaler, model, X_test, y_test = build_model(stock_data, lags, steps, features)
             predictions = model.predict(X_test)
-            model.save(f"{cwd}\\KerasModels\\{ticker}_Model.keras", overwrite=True, zipped=None)
+            model.save(f"{cwd}/KerasModels/{ticker}_Model.keras", overwrite=True, zipped=None)
             st.write("Model successfully built and saved")
         
         # In either case, the model is then used to make the forecast
